@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual envs
+venv/
+.venv/
+
+# Build / compiled CUDA artifacts
+minitorch/cuda_kernels/*.so
+
+# Test caches
+.pytest_cache/
+.hypothesis/
