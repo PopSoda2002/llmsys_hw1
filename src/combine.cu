@@ -476,7 +476,54 @@ __global__ void MatrixMultiplyKernel(
   // 6. Synchronize to make sure all threads are done computing the output tile for (row, col)
   // 7. Write the output to global memory
 
-  assert(false && "Not Implemented");
+  int row = blockIdx.x * TILE + threadIdx.x;
+  int col = blockIdx.y * TILE + threadIdx.y;
+  int m = out_shape[1];
+  int p = out_shape[2];
+  int n = a_shape[2];
+
+  float acc = 0.0f;
+  int num_tiles = (n + TILE - 1) / TILE;
+
+  for (int kt = 0; kt < num_tiles; ++kt)
+  {
+    int a_k = kt * TILE + threadIdx.y;
+    int b_k = kt * TILE + threadIdx.x;
+
+    if (row < m && a_k < n)
+    {
+      a_shared[threadIdx.x][threadIdx.y] =
+          a_storage[batch * a_batch_stride + row * a_strides[1] + a_k * a_strides[2]];
+    }
+    else
+    {
+      a_shared[threadIdx.x][threadIdx.y] = 0.0f;
+    }
+
+    if (b_k < n && col < p)
+    {
+      b_shared[threadIdx.x][threadIdx.y] =
+          b_storage[batch * b_batch_stride + b_k * b_strides[1] + col * b_strides[2]];
+    }
+    else
+    {
+      b_shared[threadIdx.x][threadIdx.y] = 0.0f;
+    }
+
+    __syncthreads();
+
+    for (int k = 0; k < TILE; ++k)
+    {
+      acc += a_shared[threadIdx.x][k] * b_shared[k][threadIdx.y];
+    }
+
+    __syncthreads();
+  }
+
+  if (row < m && col < p)
+  {
+    out[batch * out_strides[0] + row * out_strides[1] + col * out_strides[2]] = acc;
+  }
   /// END HW1_4
 }
 
