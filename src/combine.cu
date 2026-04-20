@@ -393,7 +393,7 @@ __global__ void reduceKernel(
    *  None (Fills in out array)
    */
 
-  // __shared__ double cache[BLOCK_DIM]; // Uncomment this line if you want to use shared memory to store partial results
+  __shared__ float cache[BLOCK_DIM];
   int out_index[MAX_DIMS];
 
   /// BEGIN HW1_3
@@ -404,19 +404,41 @@ __global__ void reduceKernel(
   // 4. Iterate over the reduce_dim dimension of the input array to compute the reduced value
   // 5. Write the reduced value to out memory
 
-  int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= out_size) return;
-  to_index(i, out_shape, out_index, shape_size);
+  int tid = threadIdx.x;
+  int ordinal = blockIdx.x;
+  if (ordinal >= out_size) return;
+
+  to_index(ordinal, out_shape, out_index, shape_size);
   int out_pos = index_to_position(out_index, out_strides, shape_size);
-  float acc = reduce_value;
+  out_index[reduce_dim] = 0;
+  int base_a_pos = index_to_position(out_index, a_strides, shape_size);
   int reduce_size = a_shape[reduce_dim];
-  for (int j = 0; j < reduce_size; ++j)
+  int a_stride_r = a_strides[reduce_dim];
+
+  // Phase 1: each thread serially reduces its strided slice into a register.
+  float acc = reduce_value;
+  for (int j = tid; j < reduce_size; j += blockDim.x)
   {
-    out_index[reduce_dim] = j;
-    int a_pos = index_to_position(out_index, a_strides, shape_size);
+    int a_pos = base_a_pos + j * a_stride_r;
     acc = fn(fn_id, acc, a_storage[a_pos]);
   }
-  out[out_pos] = acc;
+  cache[tid] = acc;
+  __syncthreads();
+
+  // Phase 2: tree reduction in shared memory (O(log blockDim.x) steps).
+  for (int s = blockDim.x / 2; s > 0; s >>= 1)
+  {
+    if (tid < s)
+    {
+      cache[tid] = fn(fn_id, cache[tid], cache[tid + s]);
+    }
+    __syncthreads();
+  }
+
+  if (tid == 0)
+  {
+    out[out_pos] = cache[0];
+  }
   /// END HW1_3
 }
 
@@ -764,9 +786,10 @@ extern "C"
     cudaMemcpy(d_a_shape, a_shape, shape_size * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_a_strides, a_strides, shape_size * sizeof(int), cudaMemcpyHostToDevice);
 
-    // Launch kernel
-    int threadsPerBlock = 32;
-    int blocksPerGrid = (out_size + threadsPerBlock - 1) / threadsPerBlock;
+    // Launch kernel: one block per output element, BLOCK_DIM threads per block
+    // cooperate via shared memory to do a tree reduction.
+    int threadsPerBlock = BLOCK_DIM;
+    int blocksPerGrid = out_size;
     reduceKernel<<<blocksPerGrid, threadsPerBlock>>>(
         d_out, d_out_shape, d_out_strides, out_size,
         d_a, d_a_shape, d_a_strides,
