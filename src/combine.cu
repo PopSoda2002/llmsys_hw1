@@ -404,7 +404,19 @@ __global__ void reduceKernel(
   // 4. Iterate over the reduce_dim dimension of the input array to compute the reduced value
   // 5. Write the reduced value to out memory
 
-  assert(false && "Not Implemented");
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= out_size) return;
+  to_index(i, out_shape, out_index, shape_size);
+  int out_pos = index_to_position(out_index, out_strides, shape_size);
+  float acc = reduce_value;
+  int reduce_size = a_shape[reduce_dim];
+  for (int j = 0; j < reduce_size; ++j)
+  {
+    out_index[reduce_dim] = j;
+    int a_pos = index_to_position(out_index, a_strides, shape_size);
+    acc = fn(fn_id, acc, a_storage[a_pos]);
+  }
+  out[out_pos] = acc;
   /// END HW1_3
 }
 
